@@ -205,6 +205,20 @@ LOCATION_REGISTRY = {
             "14",
         },
     ),
+    "segovia": TargetLocation(
+        name="Segovia",
+        country="España",
+        regions={
+            "Castilla y León",
+            "Segovia",
+        },
+        municipalities={
+            "Segovia",
+        },
+        postal_prefixes={
+            "40",
+        },
+    ),
     "valladolid": TargetLocation(
         name="Valladolid",
         country="España",
