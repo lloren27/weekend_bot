@@ -1,9 +1,8 @@
 import unittest
 from datetime import date
-from contextlib import redirect_stdout
-from io import StringIO
 
 from models.event import Event
+from config_locations import get_location
 from services.event_categories import (
     CATEGORIES,
     build_queries,
@@ -37,6 +36,26 @@ class EventCategoriesTest(unittest.TestCase):
         self.assertTrue(
             any(
                 "Comunidad de Madrid" in query
+                for query in queries
+            )
+        )
+
+    def test_queries_can_use_selected_location(self):
+        queries = build_queries(
+            CATEGORIES["running"],
+            get_location("barcelona"),
+        )
+
+        self.assertTrue(
+            any(
+                "Barcelona" in query
+                for query in queries
+            )
+        )
+
+        self.assertFalse(
+            any(
+                "Madrid" in query
                 for query in queries
             )
         )
@@ -135,13 +154,10 @@ class EventCategoriesTest(unittest.TestCase):
             ),
         ]
 
-        with redirect_stdout(
-            StringIO()
-        ):
-            filtered_events = filter_events_by_category(
-                category,
-                events,
-            )
+        filtered_events = filter_events_by_category(
+            category,
+            events,
+        )
 
         self.assertEqual(
             filtered_events,
@@ -155,22 +171,19 @@ class EventCategoriesTest(unittest.TestCase):
             "deporte_profesional"
         ]
 
-        with redirect_stdout(
-            StringIO()
-        ):
-            self.assertTrue(
-                should_skip_url(
-                    category,
-                    "https://www.bing.com/aclick?u=example",
-                )
+        self.assertTrue(
+            should_skip_url(
+                category,
+                "https://www.bing.com/aclick?u=example",
             )
+        )
 
-            self.assertTrue(
-                should_skip_url(
-                    category,
-                    "https://www.viagogo.es/Entradas-Deportes",
-                )
+        self.assertTrue(
+            should_skip_url(
+                category,
+                "https://www.viagogo.es/Entradas-Deportes",
             )
+        )
 
         self.assertFalse(
             should_skip_url(

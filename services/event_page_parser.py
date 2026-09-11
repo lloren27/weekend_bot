@@ -1,4 +1,5 @@
 import json
+import logging
 
 from datetime import date, datetime
 
@@ -23,6 +24,8 @@ GENERIC_NAMES = [
     "la sala - del movistar arena",
     "conciertos - sala la riviera",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 def is_generic_event_name(name: str) -> bool:
@@ -261,9 +264,10 @@ def fetch_page_events(
         response.raise_for_status()
 
     except Exception as error:
-        print(
-            f"⚠️ No se pudo abrir "
-            f"{url}: {error}"
+        logger.warning(
+            "No se pudo abrir %s: %s",
+            url,
+            error,
         )
 
         return []

@@ -13,3 +13,15 @@ APP_NAME = os.getenv(
 )
 
 TIMEZONE = "Europe/Madrid"
+
+LOG_LEVEL = os.getenv(
+    "LOG_LEVEL",
+    "INFO",
+)
+
+CACHE_TTL_SECONDS = int(
+    os.getenv(
+        "CACHE_TTL_SECONDS",
+        "1800",
+    )
+)

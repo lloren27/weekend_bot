@@ -1,14 +1,24 @@
 from models.event import Event
+from models.location import TargetLocation
 
 from services.event_categories import (
-    limit_events_per_day,
     search_category,
 )
 
 
-def search_concerts() -> list[Event]:
+def search_concerts(
+    location: TargetLocation | None = None,
+) -> list[Event]:
+    if location is None:
+        events, _ = search_category(
+            "conciertos"
+        )
+
+        return events
+
     events, _ = search_category(
-        "conciertos"
+        "conciertos",
+        location,
     )
 
     return events

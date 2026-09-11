@@ -1,3 +1,5 @@
+import logging
+
 from models.event import Event
 from models.location import TargetLocation
 
@@ -25,6 +27,8 @@ COMMUNITY_OF_MADRID_VENUES = {
     "movistar arena",
     "palacio vistalegre",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_country(
@@ -245,14 +249,15 @@ def filter_events_by_location(
             )
 
         else:
-            print(
-                f"🌍 Fuera de {target.name}: "
-                f"{event.title} | "
-                f"{event.venue} | "
-                f"{event.municipality} | "
-                f"{event.region} | "
-                f"{event.country} | "
-                f"{event.postal_code}"
+            logger.debug(
+                "Fuera de %s: %s | %s | %s | %s | %s | %s",
+                target.name,
+                event.title,
+                event.venue,
+                event.municipality,
+                event.region,
+                event.country,
+                event.postal_code,
             )
 
     return valid_events

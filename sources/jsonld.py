@@ -1,4 +1,5 @@
 import json
+import logging
 
 from datetime import date, datetime
 
@@ -6,8 +7,10 @@ import httpx
 
 from bs4 import BeautifulSoup
 
+from config import CACHE_TTL_SECONDS
 from models.event import Event
 
+from services.cache import TTLCache
 from services.normalizer import to_text
 
 from services.source_registry import (
@@ -20,6 +23,12 @@ EVENT_TYPES = {
     "MusicEvent",
     "Festival",
 }
+
+_PAGE_CACHE = TTLCache(
+    CACHE_TTL_SECONDS
+)
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_schema_type(
@@ -515,16 +524,15 @@ def extract_offer(
     )
 
 
-def extract_events_from_url(
+def fetch_page_text(
     url: str,
-    valid_dates: set[date],
-    category: str = "concert",
-    allowed_types: set[str] | None = None,
-) -> list[Event]:
-    """
-    Descarga una página y extrae los eventos
-    definidos mediante JSON-LD/schema.org.
-    """
+) -> str | None:
+    cached_text = _PAGE_CACHE.get(
+        url
+    )
+
+    if cached_text is not None:
+        return cached_text
 
     try:
         response = httpx.get(
@@ -542,15 +550,46 @@ def extract_events_from_url(
         response.raise_for_status()
 
     except Exception as error:
-        print(
-            f"⚠️ No se pudo abrir "
-            f"{url}: {error}"
+        logger.warning(
+            "No se pudo abrir %s: %s",
+            url,
+            error,
         )
 
+        return None
+
+    _PAGE_CACHE.set(
+        url,
+        response.text,
+    )
+
+    return response.text
+
+
+def clear_page_cache() -> None:
+    _PAGE_CACHE.clear()
+
+
+def extract_events_from_url(
+    url: str,
+    valid_dates: set[date],
+    category: str = "concert",
+    allowed_types: set[str] | None = None,
+) -> list[Event]:
+    """
+    Descarga una página y extrae los eventos
+    definidos mediante JSON-LD/schema.org.
+    """
+
+    page_text = fetch_page_text(
+        url
+    )
+
+    if page_text is None:
         return []
 
     soup = BeautifulSoup(
-        response.text,
+        page_text,
         "html.parser"
     )
 

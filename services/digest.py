@@ -1,14 +1,17 @@
+import logging
+
 from html import escape
 
 from config import APP_NAME
 from config_locations import CURRENT_LOCATION
+from models.location import TargetLocation
 
 from services.dates import get_next_weekend
 from services.event_categories import (
     get_category,
+    get_category_commands,
     search_category,
 )
-from services.search import search_weekend_events
 
 
 WEEKDAY_NAMES = {
@@ -21,9 +24,12 @@ WEEKDAY_NAMES = {
     6: "Dom",
 }
 
+logger = logging.getLogger(__name__)
+
 
 def build_category_digest(
-    key: str
+    key: str,
+    location: TargetLocation = CURRENT_LOCATION,
 ) -> str:
     friday, saturday, sunday = get_next_weekend()
 
@@ -32,12 +38,13 @@ def build_category_digest(
     )
 
     events, fallback_results = search_category(
-        key
+        key,
+        location,
     )
 
     text = (
         f"{category.emoji} <b>{category.title} "
-        f"EN {escape(CURRENT_LOCATION.name.upper())}</b>\n"
+        f"EN {escape(location.name.upper())}</b>\n"
         f"📅 {friday.strftime('%d/%m')} "
         f"— {sunday.strftime('%d/%m/%Y')}\n"
     )
@@ -220,63 +227,68 @@ def clean_text(
     return text
 
 
-def build_weekend_digest():
+def build_weekend_digest(
+    location: TargetLocation = CURRENT_LOCATION,
+) -> str:
     friday, saturday, sunday = (
         get_next_weekend()
     )
 
-    print(
-        f"🔎 Buscando eventos "
-        f"del {friday} al {sunday}"
+    logger.info(
+        "Buscando eventos del %s al %s",
+        friday,
+        sunday,
     )
 
-    events = search_weekend_events()
-
     text = (
-        f"📰 {APP_NAME.upper()}\n"
-        f"📍 {CURRENT_LOCATION.name}\n"
+        f"📰 <b>{escape(APP_NAME.upper())}</b>\n"
+        f"📍 {escape(location.name)}\n"
         f"📅 {friday.strftime('%d/%m')} "
         f"— {sunday.strftime('%d/%m/%Y')}\n"
     )
 
-    for category, results in events.items():
-        if not results:
-            continue
+    found_anything = False
 
-        text += (
-            f"\n\n{category}\n"
+    for category in get_category_commands():
+        events, fallback_results = search_category(
+            category.key,
+            location,
         )
 
-        for result in results:
-            title = result.get(
-                "title",
-                "Evento"
-            )
-
-            body = clean_text(
-                result.get(
-                    "body",
-                    ""
-                )
-            )
-
-            url = result.get(
-                "href",
-                ""
-            )
+        if events:
+            found_anything = True
 
             text += (
-                f"\n• {title}\n"
+                f"\n\n{category.emoji} "
+                f"<b>{escape(category.title)}</b>"
             )
 
-            if body:
-                text += (
-                    f"{body}\n"
-                )
+            text += format_event_list(
+                events,
+                category.emoji,
+            )
 
-            if url:
-                text += (
-                    f"🔗 {url}\n"
-                )
+            continue
+
+        if fallback_results:
+            found_anything = True
+
+            text += (
+                f"\n\n{category.emoji} "
+                f"<b>{escape(category.title)}</b>\n"
+                "No he encontrado eventos con fecha "
+                "verificable, pero estos resultados "
+                "parecen útiles:"
+            )
+
+            text += format_result_list(
+                fallback_results[:3]
+            )
+
+    if not found_anything:
+        text += (
+            "\n\nNo he encontrado planes con fecha "
+            "verificable para este fin de semana."
+        )
 
     return text

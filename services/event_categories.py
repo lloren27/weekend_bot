@@ -1,8 +1,11 @@
+import logging
+
 from dataclasses import dataclass
 
 from config_locations import CURRENT_LOCATION
 
 from models.event import Event
+from models.location import TargetLocation
 
 from services.dates import get_next_weekend
 from services.deduplicator import deduplicate_events
@@ -17,6 +20,9 @@ from services.source_registry import get_domain
 from services.web_search import search_web
 
 from sources.jsonld import extract_events_from_url
+
+
+logger = logging.getLogger(__name__)
 
 
 PROFESSIONAL_SPORT_TERMS = {
@@ -197,10 +203,10 @@ CATEGORIES = {
             "Festival",
         },
         query_templates=(
-            "fiestas patronales Comunidad de Madrid {dates}",
-            "fiestas populares pueblos Madrid {dates}",
-            "fiestas regionales Comunidad de Madrid {dates}",
-            "agenda fiestas Comunidad de Madrid {dates}",
+            "fiestas patronales {location} {dates}",
+            "fiestas populares {location} {dates}",
+            "fiestas regionales {location} {dates}",
+            "agenda fiestas {location} {dates}",
         ),
     ),
     "deporte_profesional": EventCategory(
@@ -215,27 +221,19 @@ CATEGORIES = {
             "SportsEvent",
         },
         query_templates=(
-            "Real Madrid partido Madrid {dates}",
-            "Atlético de Madrid partido Madrid {dates}",
-            "Rayo Vallecano partido Madrid {dates}",
-            "Getafe CF partido Madrid {dates}",
-            "CD Leganés partido Madrid {dates}",
-            "Real Madrid baloncesto partido Madrid {dates}",
-            "Movistar Estudiantes partido Madrid {dates}",
-            "Liga Endesa Madrid partido {dates}",
-            "fútbol femenino profesional Madrid partido {dates}",
-            "Liga F Madrid partido {dates}",
-            "fútbol sala Inter Movistar partido Madrid {dates}",
-            "rugby división de honor Madrid partido {dates}",
-            "voleibol superliga Madrid partido {dates}",
-            "balonmano liga asobal Madrid partido {dates}",
-            "hockey hierba división de honor Madrid partido {dates}",
-            "tenis profesional Madrid torneo {dates}",
-            "site:realmadrid.com entradas partido {dates}",
-            "site:atleticodemadrid.com entradas partido {dates}",
-            "site:rayovallecano.es entradas partido {dates}",
-            "site:getafecf.com entradas partido {dates}",
-            "site:cdleganes.com entradas partido {dates}",
+            "partidos deporte profesional {location} {dates}",
+            "fútbol profesional {location} partido {dates}",
+            "baloncesto profesional {location} partido {dates}",
+            "Liga Endesa {location} partido {dates}",
+            "fútbol femenino profesional {location} partido {dates}",
+            "Liga F {location} partido {dates}",
+            "fútbol sala {location} partido {dates}",
+            "rugby división de honor {location} partido {dates}",
+            "voleibol superliga {location} partido {dates}",
+            "balonmano liga asobal {location} partido {dates}",
+            "hockey hierba división de honor {location} partido {dates}",
+            "tenis profesional {location} torneo {dates}",
+            "entradas partido {location} {dates}",
         ),
     ),
     "running": EventCategory(
@@ -250,11 +248,11 @@ CATEGORIES = {
             "SportsEvent",
         },
         query_templates=(
-            "carrera popular Madrid {dates}",
-            "10K Madrid {dates}",
-            "media maratón Madrid {dates}",
-            "trail Madrid sierra {dates}",
-            "carrera running Comunidad de Madrid {dates}",
+            "carrera popular {location} {dates}",
+            "10K {location} {dates}",
+            "media maratón {location} {dates}",
+            "trail {location} {dates}",
+            "carrera running {location} {dates}",
         ),
     ),
     "ciclismo": EventCategory(
@@ -269,12 +267,12 @@ CATEGORIES = {
             "SportsEvent",
         },
         query_templates=(
-            "marcha cicloturista Madrid {dates}",
-            "carrera ciclismo carretera Madrid {dates}",
-            "gravel Madrid evento ciclismo {dates}",
-            "XCM BTT Madrid carrera {dates}",
-            "MTB Madrid carrera {dates}",
-            "ciclismo Comunidad de Madrid {dates}",
+            "marcha cicloturista {location} {dates}",
+            "carrera ciclismo carretera {location} {dates}",
+            "gravel {location} evento ciclismo {dates}",
+            "XCM BTT {location} carrera {dates}",
+            "MTB {location} carrera {dates}",
+            "ciclismo {location} {dates}",
         ),
     ),
 }
@@ -303,11 +301,12 @@ def get_date_text() -> str:
 
 
 def build_queries(
-    category: EventCategory
+    category: EventCategory,
+    location: TargetLocation = CURRENT_LOCATION,
 ) -> list[str]:
     return [
         template.format(
-            location=CURRENT_LOCATION.name,
+            location=location.name,
             dates=get_date_text(),
         )
         for template in category.query_templates
@@ -315,16 +314,20 @@ def build_queries(
 
 
 def discover_urls(
-    category: EventCategory
+    category: EventCategory,
+    location: TargetLocation = CURRENT_LOCATION,
 ) -> tuple[set[str], list[dict]]:
     urls: set[str] = set()
     search_results: list[dict] = []
 
     for query in build_queries(
-        category
+        category,
+        location,
     ):
-        print(
-            f"{category.emoji} Buscando: {query}"
+        logger.info(
+            "Buscando %s: %s",
+            category.command,
+            query,
         )
 
         try:
@@ -334,10 +337,11 @@ def discover_urls(
             )
 
         except Exception as error:
-            print(
-                f"⚠️ Error DDGS: "
-                f"{type(error).__name__}: "
-                f"{error}"
+            logger.warning(
+                "Error DDGS buscando %s: %s: %s",
+                category.command,
+                type(error).__name__,
+                error,
             )
 
             continue
@@ -358,9 +362,10 @@ def discover_urls(
             ):
                 urls.add(url)
 
-    print(
-        f"🔗 URLs descubiertas para "
-        f"{category.command}: {len(urls)}"
+    logger.info(
+        "URLs descubiertas para %s: %s",
+        category.command,
+        len(urls),
     )
 
     return urls, search_results
@@ -378,9 +383,9 @@ def should_skip_url(
     )
 
     if domain in BLOCKED_PROFESSIONAL_SPORT_DOMAINS:
-        print(
-            f"🏟️ URL descartada por fuente poco fiable: "
-            f"{url}"
+        logger.info(
+            "URL descartada por fuente poco fiable: %s",
+            url,
         )
 
         return True
@@ -391,6 +396,7 @@ def should_skip_url(
 def extract_category_events(
     category: EventCategory,
     urls: set[str],
+    location: TargetLocation = CURRENT_LOCATION,
 ) -> list[Event]:
     friday, saturday, sunday = get_next_weekend()
 
@@ -416,15 +422,17 @@ def extract_category_events(
             )
 
         except Exception as error:
-            print(
-                f"⚠️ Error procesando {url}: "
-                f"{type(error).__name__}: "
-                f"{error}"
+            logger.warning(
+                "Error procesando %s: %s: %s",
+                url,
+                type(error).__name__,
+                error,
             )
 
-    print(
-        f"{category.emoji} Eventos antes de deduplicar: "
-        f"{len(events)}"
+    logger.info(
+        "Eventos antes de deduplicar para %s: %s",
+        category.command,
+        len(events),
     )
 
     events = filter_events_by_category(
@@ -432,29 +440,32 @@ def extract_category_events(
         events,
     )
 
-    print(
-        f"{category.emoji} Eventos tras filtro de categoría: "
-        f"{len(events)}"
+    logger.info(
+        "Eventos tras filtro de categoría para %s: %s",
+        category.command,
+        len(events),
     )
 
     events = deduplicate_events(
         events
     )
 
-    print(
-        f"{category.emoji} Eventos después de deduplicar: "
-        f"{len(events)}"
+    logger.info(
+        "Eventos después de deduplicar para %s: %s",
+        category.command,
+        len(events),
     )
 
     events = filter_events_by_location(
         events,
-        CURRENT_LOCATION,
+        location,
     )
 
-    print(
-        f"📍 Eventos confirmados en "
-        f"{CURRENT_LOCATION.name}: "
-        f"{len(events)}"
+    logger.info(
+        "Eventos confirmados en %s para %s: %s",
+        location.name,
+        category.command,
+        len(events),
     )
 
     events = limit_events_per_day(
@@ -469,9 +480,10 @@ def extract_category_events(
         )
     )
 
-    print(
-        f"{category.emoji} Eventos seleccionados: "
-        f"{len(events)}"
+    logger.info(
+        "Eventos seleccionados para %s: %s",
+        category.command,
+        len(events),
     )
 
     return events
@@ -495,11 +507,11 @@ def filter_events_by_category(
             )
 
         else:
-            print(
-                f"🏟️ Descartado no profesional: "
-                f"{event.title} | "
-                f"{event.venue} | "
-                f"{event.source}"
+            logger.debug(
+                "Descartado no profesional: %s | %s | %s",
+                event.title,
+                event.venue,
+                event.source,
             )
 
     return filtered_events
@@ -541,19 +553,22 @@ def is_professional_sport_event(
 
 
 def search_category(
-    key: str
+    key: str,
+    location: TargetLocation = CURRENT_LOCATION,
 ) -> tuple[list[Event], list[dict]]:
     category = get_category(
         key
     )
 
     urls, search_results = discover_urls(
-        category
+        category,
+        location,
     )
 
     events = extract_category_events(
         category,
         urls,
+        location,
     )
 
     fallback_results: list[dict] = []

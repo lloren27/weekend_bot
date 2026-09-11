@@ -1,6 +1,6 @@
 # Weekend Bot
 
-Weekend Bot es un bot de Telegram para descubrir planes de fin de semana. El proyecto está preparado para crecer hacia varias ciudades, aunque ahora la ubicación principal está configurada para la Comunidad de Madrid.
+Weekend Bot es un bot de Telegram para descubrir planes de fin de semana en ciudades españolas. Por defecto usa la Comunidad de Madrid, y cada chat puede elegir su ciudad con `/ciudad`.
 
 El bot busca eventos del siguiente viernes, sábado y domingo, extrae información estructurada de páginas con JSON-LD/schema.org, filtra por ubicación, deduplica resultados y genera mensajes listos para Telegram.
 
@@ -8,6 +8,8 @@ El bot busca eventos del siguiente viernes, sábado y domingo, extrae informaci�
 
 - `/start`: muestra la ayuda inicial.
 - `/help`: lista todos los comandos disponibles.
+- `/ciudad`: muestra la ciudad actual o permite cambiarla. Ejemplo: `/ciudad Barcelona`.
+- `/ciudades`: lista las ciudades disponibles.
 - `/planes`: digest general de planes del fin de semana.
 - `/conciertos`: conciertos y música en directo.
 - `/exposiciones`: exposiciones y museos.
@@ -24,6 +26,8 @@ Variables de entorno:
 
 - `TELEGRAM_BOT_TOKEN`: token del bot creado en BotFather. Obligatoria.
 - `APP_NAME`: nombre visible que usa el bot en mensajes de ayuda. Opcional; por defecto `Weekend Bot`.
+- `LOG_LEVEL`: nivel de logs (`DEBUG`, `INFO`, `WARNING`, `ERROR`). Opcional; por defecto `INFO`.
+- `CACHE_TTL_SECONDS`: segundos que se cachean búsquedas web y páginas descargadas en memoria. Opcional; por defecto `1800`. Usa `0` para desactivar la caché.
 
 Para desarrollo local puedes crear un `.env` a partir de `.env.example`:
 
@@ -77,13 +81,14 @@ La aplicación está organizada por capas pequeñas:
 
 - `bot.py`: entrada principal de Telegram. Registra comandos, envía mensajes de estado y delega la generación de digests.
 - `config.py`: configuración global y variables de entorno.
-- `config_locations.py`: ubicación activa. Ahora apunta a Comunidad de Madrid, pero está separada para facilitar futuras ciudades.
+- `config_locations.py`: registro de ciudades disponibles, alias y ubicación por defecto.
 - `models/`: dataclasses de dominio, como `Event` y `TargetLocation`.
 - `services/event_categories.py`: registro de categorías, queries, filtrado semántico y pipeline común de búsqueda.
+- `services/cache.py`: caché TTL en memoria para reducir llamadas repetidas a buscadores y páginas.
 - `services/digest.py`: formatea los eventos y resultados para Telegram.
-- `sources/jsonld.py`: descarga páginas y extrae eventos desde JSON-LD/schema.org.
+- `sources/jsonld.py`: descarga páginas, reutiliza HTML cacheado y extrae eventos desde JSON-LD/schema.org.
 - `services/deduplicator.py`: fusiona eventos repetidos. Incluye lógica especial para conciertos y deporte profesional.
-- `services/location_filter.py`: comprueba si un evento pertenece a la ubicación activa.
+- `services/location_filter.py`: comprueba si un evento pertenece a la ubicación seleccionada.
 - `services/normalizer.py`: normalización de texto, horas y alias de recintos.
 - `services/ranking.py`: ordena eventos por calidad de datos y prioridad de fuente.
 - `services/source_registry.py`: asigna nombre y prioridad a fuentes conocidas.
@@ -93,7 +98,7 @@ La aplicación está organizada por capas pequeñas:
 
 1. El usuario ejecuta un comando, por ejemplo `/conciertos`.
 2. `bot.py` llama a `build_category_digest()`.
-3. `event_categories.py` genera queries para el fin de semana y la ubicación activa.
+3. `event_categories.py` genera queries para el fin de semana y la ubicación seleccionada.
 4. `web_search.py` descubre URLs.
 5. `jsonld.py` intenta extraer eventos con fecha verificable.
 6. Se filtra por categoría y por ubicación.
@@ -104,5 +109,5 @@ La aplicación está organizada por capas pequeñas:
 ## Notas de Diseño
 
 - Las categorías nuevas deben añadirse preferentemente en `services/event_categories.py`.
-- La futura selección de ciudad debería evolucionar desde `config_locations.py` hacia un registro de ubicaciones.
+- La ciudad seleccionada se guarda en memoria por chat de Telegram. Si el proceso se reinicia, el chat vuelve a la ubicación por defecto.
 - `.env`, `.venv`, cachés y logs están excluidos del repositorio con `.gitignore` y `.dockerignore`.
