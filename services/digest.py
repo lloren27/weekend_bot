@@ -7,6 +7,7 @@ from config_locations import CURRENT_LOCATION
 from models.location import TargetLocation
 
 from services.dates import get_next_weekend
+from services.event_identity import is_festival
 from services.event_categories import (
     get_category,
     get_category_commands,
@@ -91,11 +92,9 @@ def format_event_list(
         if not event.date:
             continue
 
-        # Si conocemos el artista, mostramos el artista.
-        # Si no, utilizamos el título del evento.
         display_name = (
-            event.artist
-            or event.title
+            event.title if is_festival(event)
+            else event.artist or event.title
         )
 
         weekday = WEEKDAY_NAMES[
@@ -116,6 +115,15 @@ def format_event_list(
             f"\n\n{icon} <b>{escape(display_name)}</b>\n"
             f"📅 {date_line}\n"
         )
+
+        if event.related_events:
+            acts = []
+            for act in event.related_events:
+                label = act.artist or act.title
+                if act.time:
+                    label += f" ({act.time})"
+                acts.append(escape(label))
+            text += f"🎶 Incluye: {', '.join(acts)}\n"
 
         if event.venue:
             text += (

@@ -1,5 +1,7 @@
 import json
 import logging
+from copy import deepcopy
+from urllib.parse import urljoin, urlsplit
 
 from datetime import date, datetime
 
@@ -12,6 +14,7 @@ from models.event import Event
 
 from services.cache import TTLCache
 from services.normalizer import to_text
+from services.event_identity import canonical_url
 
 from services.source_registry import (
     get_source_info,
@@ -78,6 +81,57 @@ def walk_json(node):
     elif isinstance(node, list):
         for item in node:
             yield from walk_json(item)
+
+
+def walk_event_nodes(node, parent=None):
+    """Retain explicit schema.org subEvent relationships while traversing."""
+    if isinstance(node, dict):
+        yield node, parent
+        for key, value in node.items():
+            yield from walk_event_nodes(value, node if key in {"subEvent", "subEvents"} else None)
+    elif isinstance(node, list):
+        for item in node:
+            yield from walk_event_nodes(item, parent)
+
+
+def identity_metadata(node: dict, source_url: str, parent=None) -> dict:
+    performers = node.get("performer") or []
+    if not isinstance(performers, list):
+        performers = [performers]
+    participants = [to_text(p) for p in performers if to_text(p)]
+    types = node.get("@type", [])
+    if not isinstance(types, list):
+        types = [types]
+    types = [normalize_schema_type(t) for t in types]
+    external_ids = {}
+    if to_text(node.get("@id")):
+        external_ids["@id"] = canonical_url(urljoin(source_url, to_text(node["@id"])))
+    identifier = to_text(node.get("identifier"))
+    if identifier:
+        external_ids[urlsplit(source_url).netloc.lower()] = identifier
+    parent = node.get("superEvent") or parent or {}
+    if isinstance(parent, dict):
+        parent_name = to_text(parent.get("name")) or None
+        parent_url = to_text(parent.get("url")) or to_text(parent.get("@id"))
+    else:
+        parent_name, parent_url = None, to_text(parent)
+    location = node.get("location") or {}
+    if isinstance(location, list):
+        location = next((item for item in location if isinstance(item, dict)), {})
+    address = location.get("address") if isinstance(location, dict) else None
+    street = to_text(address.get("streetAddress")) if isinstance(address, dict) else to_text(address)
+    return {
+        "end_date": parse_datetime(node.get("endDate"))[0],
+        "event_type": "Festival" if "Festival" in types else next(iter(types), None),
+        "participants": participants,
+        "address": street or None,
+        "organizer": to_text(node.get("organizer")) or None,
+        "external_ids": external_ids,
+        "parent_event_name": parent_name,
+        "parent_event_url": urljoin(source_url, parent_url) if parent_url else None,
+        "source_url": source_url,
+        "original_data": deepcopy(node),
+    }
 
 
 def is_event(
@@ -625,7 +679,7 @@ def extract_events_from_url(
         ):
             continue
 
-        for node in walk_json(
+        for node, parent in walk_event_nodes(
             json_data
         ):
 
@@ -763,6 +817,7 @@ def extract_events_from_url(
                     url=event_url,
 
                     description=description,
+                    **identity_metadata(node, url, parent),
                 )
             )
 

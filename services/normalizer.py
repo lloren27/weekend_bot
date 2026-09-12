@@ -5,6 +5,15 @@ from typing import Any
 
 VENUE_ALIAS_GROUPS = (
     (
+        "cide segovia",
+        "cide",
+        "recinto del cide",
+        "centro de innovacion desarrollo empresarial cide",
+        "centro de innovacion y desarrollo empresarial cide",
+        "cide centro de innovacion y desarrollo empresarial",
+        "centro de innovacion y desarrollo empresarial",
+    ),
+    (
         "movistar arena",
         "wizink center",
         "palacio de deportes",
@@ -204,7 +213,7 @@ def normalize_time(
         return None
 
     match = re.search(
-        r"([01]?\d|2[0-3])[:.]([0-5]\d)",
+        r"(?<![\d:])([01]?\d|2[0-3])[:.h]([0-5]\d)(?!\d)",
         text
     )
 

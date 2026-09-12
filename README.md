@@ -111,3 +111,38 @@ La aplicación está organizada por capas pequeñas:
 - Las categorías nuevas deben añadirse preferentemente en `services/event_categories.py`.
 - La ciudad seleccionada se guarda en memoria por chat de Telegram. Si el proceso se reinicia, el chat vuelve a la ubicación por defecto.
 - `.env`, `.venv`, cachés y logs están excluidos del repositorio con `.gitignore` y `.dockerignore`.
+
+## Identidad y deduplicación de eventos
+
+`services/event_identity.py` compara fecha, rango de fechas, recinto, ciudad,
+participantes, tipo y hora, además del título normalizado. Reconoce variantes
+como «Vibra Mahou Fest» / «Vibra Mahou Festival Segovia 2026» y los nombres
+abreviado y completo del CIDE. La normalización solo se usa para comparar.
+
+- `MATCH`: permite fusionar las fuentes. Cada miembro del grupo debe coincidir
+  con todos los demás para evitar unir sesiones distintas a través de una ficha incompleta.
+- `POSSIBLE_MATCH`: conserva entradas separadas y registra la referencia,
+  puntuación y motivos en `possible_matches` para revisión.
+- `DIFFERENT`: impide fusionar identidades con datos incompatibles.
+
+Cada resultado incluye `canonical_id`, `sources` (valores originales y JSON-LD),
+`field_sources` (procedencia de los datos consolidados), `conflicts`,
+`match_level` y `match_confidence`. Una ficha sin coincidencias confirmadas
+conserva estos dos últimos valores como desconocidos. Se elige la fuente con
+mayor prioridad, se completan sus datos ausentes y se conservan las discrepancias
+de precio; un precio inferior por sí solo no decide la selección.
+Los identificadores son deterministas para la misma identidad normalizada y
+el mismo conjunto de fuentes, independientemente del orden de búsqueda. No hay
+un registro persistente de identidad entre búsquedas: datos nuevos de ubicación,
+fecha u hora pueden cambiar el identificador.
+
+Los festivales se muestran con su título, aunque una fuente indique un único
+artista como `performer`. Una actuación puede aparecer dentro de `related_events`
+y bajo «Incluye» en el mensaje cuando coinciden fecha y recinto y hay evidencia
+explícita: `superEvent`/`subEvent`, participantes del cartel o un enlace compartido
+al festival. La actuación conserva sus propios datos y fuentes. Compartir fecha
+y recinto no basta, y no se absorben jornadas o actuaciones de eventos de varios días.
+
+Se mantiene la tolerancia previa de hasta dos horas para fuentes de deporte
+profesional con los mismos equipos y ubicación, registrando la discrepancia.
+En conciertos, dos horas distintas dejan la coincidencia pendiente de revisión.

@@ -1,3 +1,9 @@
+from copy import deepcopy
+from dataclasses import fields
+
+from services.event_identity import (
+    compare_events, canonical_event_id, festival_contains,
+)
 from models.event import Event
 from services.normalizer import (
     normalize_text,
@@ -78,55 +84,7 @@ def events_match(
     second: Event
 ) -> bool:
 
-    if first.date != second.date:
-        return False
-
-    if sports_events_match(
-        first,
-        second,
-    ):
-        return True
-
-    first_artist = normalize_text(
-        first.artist
-    )
-
-    second_artist = normalize_text(
-        second.artist
-    )
-
-    # Si ambas fuentes conocen artista,
-    # artista + fecha es una señal muy fuerte.
-    if first_artist and second_artist:
-        if first_artist != second_artist:
-            return False
-
-        first_venue = normalize_venue_name(
-            first.venue
-        )
-
-        second_venue = normalize_venue_name(
-            second.venue
-        )
-
-        # Si ambos conocen recinto y es diferente,
-        # asumimos que podrían ser eventos distintos.
-        if (
-            first_venue
-            and second_venue
-            and first_venue != second_venue
-        ):
-            return False
-
-        return True
-
-    # Si no tenemos artista,
-    # intentamos título exacto normalizado.
-    return (
-        normalize_text(first.title)
-        ==
-        normalize_text(second.title)
-    )
+    return compare_events(first, second).level == "MATCH"
 
 
 def sports_events_match(
@@ -314,95 +272,115 @@ def normalize_team_name(
     )
 
 
-def merge_events(
-    first: Event,
-    second: Event
-) -> Event:
+METADATA_FIELDS = {
+    "canonical_id", "sources", "match_level", "match_confidence", "field_sources",
+    "conflicts", "possible_matches", "related_events",
+}
+SOURCE_FIELDS = [item.name for item in fields(Event) if item.name not in METADATA_FIELDS]
 
-    if (
-        second.source_priority
-        > first.source_priority
-    ):
-        best = second
-        other = first
 
-    else:
-        best = first
-        other = second
+def source_snapshot(event: Event) -> dict:
+    return {name: deepcopy(getattr(event, name)) for name in SOURCE_FIELDS}
 
-    if not best.artist:
-        best.artist = other.artist
 
-    if not best.time:
-        best.time = other.time
+def event_order(event: Event) -> tuple:
+    # URLs arrive as a set from search; canonical selection must not depend on it.
+    completeness = sum(bool(getattr(event, name)) for name in SOURCE_FIELDS)
+    return (-event.source_priority, -completeness, event.url or "", event.title,
+            repr(source_snapshot(event)))
 
-    if not best.venue:
-        best.venue = other.venue
 
-    if not best.price:
-        best.price = other.price
-
-    if not best.description:
-        best.description = other.description
-
-    if not best.url:
-        best.url = other.url
-
-    # Si cualquier fuente confirma sold out,
-    # conservamos la información.
-    best.sold_out = (
-        best.sold_out
-        or other.sold_out
-    )
-
-    best.free = (
-        best.free
-        or other.free
-    )
-
-    normalize_professional_sport_display(
-        best
-    )
-
+def consolidate(group: list[Event]) -> Event:
+    ordered = sorted(group, key=event_order)
+    best = deepcopy(ordered[0])
+    best.sources = []
+    best.field_sources = {}
+    best.conflicts = []
+    best.possible_matches = []
+    best.related_events = []
+    for event in ordered:
+        for act in event.related_events:
+            if act not in best.related_events:
+                best.related_events.append(deepcopy(act))
+        for record in event.sources or [source_snapshot(event)]:
+            if record not in best.sources:
+                best.sources.append(deepcopy(record))
+    for name in SOURCE_FIELDS:
+        if name in {"original_data", "external_ids", "participants"}:
+            continue
+        if getattr(best, name) is None or getattr(best, name) == "":
+            supplied = next((getattr(e, name) for e in ordered
+                             if getattr(e, name) is not None and getattr(e, name) != ""), None)
+            setattr(best, name, supplied)
+        chosen = getattr(best, name)
+        if name in {"sold_out", "free"}:
+            chosen = any(getattr(event, name) for event in ordered)
+            setattr(best, name, chosen)
+        best.field_sources[name] = sorted({record.get("source_url") or record.get("url") or record.get("source") or "unknown"
+                                          for record in best.sources if record.get(name) == chosen})
+        values = []
+        for record in best.sources:
+            value = record.get(name)
+            if value is not None and value != "" and value not in values:
+                values.append(value)
+        if len(values) > 1 and name in {"time", "end_date", "price", "free", "sold_out", "organizer", "address"}:
+            best.conflicts.append({"field": name, "values": values})
+    best.participants = sorted({p for e in ordered for p in e.participants})
+    best.external_ids = {}
+    for event in reversed(ordered):
+        best.external_ids.update(event.external_ids)
+    for name in ("participants", "external_ids"):
+        best.field_sources[name] = sorted({r.get("source_url") or r.get("url") or r.get("source") or "unknown"
+                                          for r in best.sources if r.get(name)})
+    results = [compare_events(a, b) for i, a in enumerate(group) for b in group[i + 1:]]
+    best.match_level = "MATCH" if len(best.sources) > 1 else None
+    best.match_confidence = min((r.confidence for r in results), default=best.match_confidence)
+    normalize_professional_sport_display(best)
+    best.canonical_id = canonical_event_id(best)
     return best
 
 
-def deduplicate_events(
-    events: list[Event]
-) -> list[Event]:
+def merge_events(first: Event, second: Event) -> Event:
+    return consolidate([first, second])
 
-    unique = []
 
-    for event in events:
-
-        duplicate_index = None
-
-        for index, existing in enumerate(
-            unique
-        ):
-            if events_match(
-                existing,
-                event
-            ):
-                duplicate_index = index
-                break
-
-        if duplicate_index is None:
-            normalize_professional_sport_display(
-                event
-            )
-
-            unique.append(event)
-
+def deduplicate_events(events: list[Event]) -> list[Event]:
+    groups: list[list[Event]] = []
+    for event in sorted(events, key=event_order):
+        # Compare every source: a missing-time record must not bridge two sessions.
+        candidates = [group for group in groups
+                      if all(events_match(existing, event) for existing in group)]
+        if len(candidates) == 1:
+            candidates[0].append(event)
         else:
-            unique[duplicate_index] = (
-                merge_events(
-                    unique[duplicate_index],
-                    event,
-                )
-            )
-
-    return unique
+            groups.append([event])
+    unique = [consolidate(group) for group in groups]
+    # Incomplete identities can remain separate even with identical normalized
+    # fields. Give each retained record a distinct reference for review.
+    seen_ids = {}
+    for event in unique:
+        base_id = event.canonical_id
+        seen_ids[base_id] = seen_ids.get(base_id, 0) + 1
+        if seen_ids[base_id] > 1:
+            event.canonical_id = f"{base_id}-{seen_ids[base_id]}"
+    for i, first in enumerate(unique):
+        for second in unique[i + 1:]:
+            result = compare_events(first, second)
+            if result.level == "POSSIBLE_MATCH":
+                for event, other in ((first, second), (second, first)):
+                    event.possible_matches.append({
+                        "canonical_id": other.canonical_id, "level": result.level,
+                        "confidence": result.confidence, "reasons": list(result.reasons),
+                    })
+    # Keep performances as separate records nested under their confirmed festival.
+    # Their time, price and sources must never overwrite the festival's data.
+    contained = set()
+    for act in unique:
+        parents = [parent for parent in unique if festival_contains(parent, act)]
+        if len(parents) == 1:
+            parents[0].related_events.append(deepcopy(act))
+            contained.add(act.canonical_id)
+    return [event for event in unique if event.canonical_id not in contained]
 
 
 def normalize_professional_sport_display(
